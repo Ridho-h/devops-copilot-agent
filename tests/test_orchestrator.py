@@ -21,7 +21,7 @@ def mock_clean_repo_state():
             "failing_runs": [],
             "total_runs": 1,
         },
-        "dependencies": {"pytest": "==8.0.0"},
+        "dependencies": {},
     }
 
 
@@ -61,12 +61,16 @@ def test_orchestrator_initialization():
     assert orchestrator.token == "dummy-token"
 
 
+@patch("agent.orchestrator.check_outdated_dependencies")
 @patch("agent.orchestrator.get_stale_branches")
 @patch("agent.orchestrator.get_repo_state")
 @patch("agent.orchestrator.open_issue")
-def test_decision_loop_clean_repo_does_nothing(mock_open_issue, mock_get_repo_state, mock_get_stale, mock_clean_repo_state, tmp_path):
+def test_decision_loop_clean_repo_does_nothing(
+    mock_open_issue, mock_get_repo_state, mock_get_stale, mock_check_deps, mock_clean_repo_state, tmp_path
+):
     mock_get_repo_state.return_value = mock_clean_repo_state
     mock_get_stale.return_value = []
+    mock_check_deps.return_value = []
 
     log_file = tmp_path / "run_log.json"
     orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
@@ -136,14 +140,18 @@ def test_decision_loop_prevents_duplicate_issue(mock_open_issue, mock_get_repo_s
     assert "already open" in summary.findings[0].evidence.lower() or "duplicate" in summary.findings[0].evidence.lower()
 
 
+@patch("agent.orchestrator.check_outdated_dependencies")
 @patch("agent.orchestrator.get_stale_branches")
 @patch("agent.orchestrator.get_repo_state")
 @patch("agent.orchestrator.open_issue")
-def test_decision_loop_stale_branches_opens_issue(mock_open_issue, mock_get_repo_state, mock_get_stale, mock_clean_repo_state, tmp_path):
+def test_decision_loop_stale_branches_opens_issue(
+    mock_open_issue, mock_get_repo_state, mock_get_stale, mock_check_deps, mock_clean_repo_state, tmp_path
+):
     mock_get_repo_state.return_value = mock_clean_repo_state
     mock_get_stale.return_value = [
         {"name": "old-feature", "sha": "12345", "days_inactive": 45, "last_commit_date": "2026-08-01T00:00:00Z"}
     ]
+    mock_check_deps.return_value = []
     mock_open_issue.return_value = {
         "number": 56,
         "html_url": "https://github.com/test-owner/test-repo/issues/56",
@@ -179,3 +187,62 @@ def test_decision_loop_dry_run_mode(mock_open_issue, mock_get_repo_state, mock_g
     mock_open_issue.assert_not_called()
     assert len(summary.findings) == 1
     assert "dry_run" in summary.findings[0].action_taken
+
+
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_outdated_dependencies_opens_issue(
+    mock_open_issue, mock_get_repo_state, mock_get_stale, mock_check_deps, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    mock_check_deps.return_value = [
+        {"package": "requests", "current_version": "2.25.0", "latest_version": "2.31.0", "is_outdated": True}
+    ]
+    mock_open_issue.return_value = {
+        "number": 57,
+        "html_url": "https://github.com/test-owner/test-repo/issues/57",
+        "title": "Outdated dependencies detected (1 package(s))",
+    }
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run()
+
+    assert len(summary.findings) == 1
+    finding = summary.findings[0]
+    assert finding.type == "outdated_dependencies"
+    assert finding.action_taken == "issue"
+    assert "requests" in finding.evidence
+    mock_open_issue.assert_called_once()
+    assert "outdated dependencies" in mock_open_issue.call_args[1]["title"].lower()
+
+
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_outdated_dependencies_duplicate_suppression(
+    mock_open_issue, mock_get_repo_state, mock_get_stale, mock_check_deps, mock_clean_repo_state, tmp_path
+):
+    mock_clean_repo_state["open_issues"] = [
+        {"number": 52, "title": "Outdated dependencies detected (1 package(s))", "html_url": "https://github.com/test-owner/test-repo/issues/52"}
+    ]
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    mock_check_deps.return_value = [
+        {"package": "requests", "current_version": "2.25.0", "latest_version": "2.31.0", "is_outdated": True}
+    ]
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run()
+
+    mock_open_issue.assert_not_called()
+    assert len(summary.findings) == 1
+    assert summary.findings[0].action_taken == "none"
+    assert "already tracked" in summary.findings[0].evidence.lower() or "already open" in summary.findings[0].evidence.lower()

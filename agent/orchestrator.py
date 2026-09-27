@@ -15,6 +15,7 @@ from agent.tools.github_tools import (
     open_issue,
     open_pr,
 )
+from agent.tools.dependency_checker import check_outdated_dependencies
 
 load_dotenv()
 
@@ -77,7 +78,10 @@ class DevOpsOrchestrator:
         return None
 
     def decide(
-        self, repo_state: Dict[str, Any], stale_branches: List[Dict[str, Any]]
+        self,
+        repo_state: Dict[str, Any],
+        stale_branches: List[Dict[str, Any]],
+        outdated_deps: Optional[List[Dict[str, Any]]] = None,
     ) -> Tuple[List[RunFinding], str]:
         """Core decision loop following orchestrator rules."""
         findings: List[RunFinding] = []
@@ -199,7 +203,68 @@ class DevOpsOrchestrator:
                 )
                 return findings, f"Opened issue #{created_issue.get('number')} for {len(stale_branches)} stale branch(es)."
 
-        # 3. Quiet run: No action needed
+        # 3. Outdated Dependencies Check
+        if outdated_deps:
+            existing = self._check_duplicate_issue(open_issues, ["outdated dependencies"])
+            if existing:
+                findings.append(
+                    RunFinding(
+                        type="outdated_dependencies",
+                        evidence=f"Found {len(outdated_deps)} outdated dependency(ies), but already tracked in issue #{existing.get('number')}",
+                        action_taken="none",
+                        reference=existing.get("html_url"),
+                    )
+                )
+                return findings, f"Outdated dependencies detected, but already tracked in issue #{existing.get('number')}."
+            else:
+                dep_table_rows = "\n".join(
+                    [
+                        f"| `{d['package']}` | `{d['current_version']}` | `{d['latest_version']}` |"
+                        for d in outdated_deps
+                    ]
+                )
+                issue_title = f"Outdated dependencies detected ({len(outdated_deps)} package(s))"
+                issue_body = (
+                    f"## DevOps Copilot Health Report: Outdated Dependencies\n\n"
+                    f"The following dependencies are pinned behind their latest versions:\n\n"
+                    f"| Package | Current Version | Latest Version |\n"
+                    f"| :--- | :--- | :--- |\n"
+                    f"{dep_table_rows}\n\n"
+                    f"Consider testing and updating these packages to receive bug fixes, improvements, and security patches."
+                )
+                if self.dry_run:
+                    findings.append(
+                        RunFinding(
+                            type="outdated_dependencies",
+                            evidence=f"[DRY RUN] Would open issue for {len(outdated_deps)} outdated dependency(ies): {', '.join(d['package'] for d in outdated_deps)}",
+                            action_taken="dry_run_issue",
+                            reference=f"dry_run://{self.repo}/issues/{issue_title}",
+                        )
+                    )
+                    return findings, f"[DRY RUN] Would open issue: {issue_title}"
+
+                created_issue = open_issue(
+                    repo=self.repo,
+                    title=issue_title,
+                    body=issue_body,
+                    labels=["devops-copilot", "dependencies"],
+                    token=self.token,
+                )
+                dep_details = ", ".join(
+                    f"{d['package']} ({d['current_version']} -> {d['latest_version']})"
+                    for d in outdated_deps
+                )
+                findings.append(
+                    RunFinding(
+                        type="outdated_dependencies",
+                        evidence=f"{len(outdated_deps)} dependency(ies) outdated: {dep_details}",
+                        action_taken="issue",
+                        reference=created_issue.get("html_url"),
+                    )
+                )
+                return findings, f"Opened issue #{created_issue.get('number')} for {len(outdated_deps)} outdated dependency(ies)."
+
+        # 4. Quiet run: No action needed
         summary_msg = "No action needed this run. Repository is healthy."
         return findings, summary_msg
 
@@ -217,9 +282,11 @@ class DevOpsOrchestrator:
             default_branch=repo_state.get("default_branch"),
             token=self.token,
         )
+        dependencies = repo_state.get("dependencies", {})
+        outdated_deps = check_outdated_dependencies(dependencies)
 
         # 2. Run decision loop
-        findings, summary_text = self.decide(repo_state, stale_branches)
+        findings, summary_text = self.decide(repo_state, stale_branches, outdated_deps=outdated_deps)
 
         summary = RunSummary(
             run_date=now_str,

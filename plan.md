@@ -34,7 +34,7 @@ Out of scope for v1 (planned for v2):
 
 ### Phase 3 — Health check task
 - Implement: stale branch detection, failing CI detection, outdated dependency detection
-- Orchestrator opens one summary issue per run if anything is found
+- Orchestrator opens one issue per distinct finding (not a bundled summary), reusing the duplicate-suppression logic from Phase 2 to avoid re-filing the same problem on every run
 
 ### Phase 4 — Improvement suggestion task
 - Orchestrator reads a file/module, proposes a small refactor or doc improvement

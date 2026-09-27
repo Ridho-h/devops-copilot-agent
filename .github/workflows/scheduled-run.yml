@@ -1,0 +1,47 @@
+name: DevOps Copilot Agent - Scheduled Run
+
+on:
+  schedule:
+    # Runs every Monday at 09:00 UTC. Adjust cron as needed.
+    # Cron format: minute hour day month day-of-week
+    - cron: '0 9 * * 1'
+  workflow_dispatch: {}  # allows manual trigger from the Actions tab for testing
+
+permissions:
+  contents: write        # needed to create branches for PRs
+  issues: write          # needed to open issues
+  pull-requests: write   # needed to open PRs
+
+jobs:
+  run-orchestrator:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r agent/requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Run orchestrator
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Add any CVE/advisory API keys here if needed, e.g.:
+          # OSV_API_KEY: ${{ secrets.OSV_API_KEY }}
+        run: |
+          python agent/orchestrator.py
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: orchestrator-run-log
+          path: agent/run_log.json
+          retention-days: 30

@@ -37,8 +37,11 @@ Out of scope for v1 (planned for v2):
 - Orchestrator opens one issue per distinct finding (not a bundled summary), reusing the duplicate-suppression logic from Phase 2 to avoid re-filing the same problem on every run
 
 ### Phase 4 — Improvement suggestion task
-- Orchestrator reads a file/module, proposes a small refactor or doc improvement
-- Opens as a PR (not a direct commit), with a clear description of *why*
+- Scope guardrail: restrict suggestions to a narrow allow-list (docstrings, README gaps, missing type hints, obvious dead code) — no open-ended refactors. Cap frequency to at most one improvement suggestion per repo per N runs, not every run.
+- Orchestrator reads a file/module, proposes one change within the allow-list, with a clear description of *why*
+- Pre-PR verification: generate the change, run the repo's own test suite against it locally (skip this check only if the repo has no test suite), and only open the PR if tests still pass
+- Low-confidence fallback: if the orchestrator isn't confident the change is correct or safe (including when the pre-PR test run fails), open an issue describing the suggestion instead of a PR — do not fall back to opening a PR anyway
+- Opens as a PR (not a direct commit) only when the above checks pass
 
 ### Phase 5 — Browser/RPA layer
 - Add Playwright-based `check_upstream_changelog` and `search_cve_advisory` tools

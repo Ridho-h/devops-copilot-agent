@@ -246,3 +246,130 @@ def test_decision_loop_outdated_dependencies_duplicate_suppression(
     assert len(summary.findings) == 1
     assert summary.findings[0].action_taken == "none"
     assert "already tracked" in summary.findings[0].evidence.lower() or "already open" in summary.findings[0].evidence.lower()
+
+
+@patch("agent.orchestrator.open_pr")
+@patch("agent.orchestrator.verify_changes_with_tests")
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+def test_decision_loop_improvement_high_confidence_opens_pr(
+    mock_get_repo_state, mock_get_stale, mock_check_deps, mock_verify, mock_open_pr, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    mock_check_deps.return_value = []
+    mock_verify.return_value = (True, "All tests passed")
+    mock_open_pr.return_value = {
+        "number": 12,
+        "html_url": "https://github.com/test-owner/test-repo/pull/12",
+        "title": "docs: add docstrings to github_tools.py",
+    }
+
+    from agent.tools.improvement_advisor import ImprovementProposal
+    proposal = ImprovementProposal(
+        improvement_type="docstrings",
+        target_file="agent/tools/github_tools.py",
+        title="docs: add docstrings to github_tools.py",
+        description="Documents function inputs and outputs",
+        changes={"agent/tools/github_tools.py": "# updated"},
+        confidence=0.95,
+    )
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run(candidate_improvement=proposal)
+
+    assert len(summary.findings) == 1
+    finding = summary.findings[0]
+    assert finding.type == "improvement"
+    assert finding.action_taken == "pr"
+    assert finding.reference == "https://github.com/test-owner/test-repo/pull/12"
+    mock_open_pr.assert_called_once()
+
+
+@patch("agent.orchestrator.open_issue")
+@patch("agent.orchestrator.open_pr")
+@patch("agent.orchestrator.verify_changes_with_tests")
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+def test_decision_loop_improvement_low_confidence_fallback_opens_issue(
+    mock_get_repo_state, mock_get_stale, mock_check_deps, mock_verify, mock_open_pr, mock_open_issue, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    mock_check_deps.return_value = []
+    # Pre-PR test verification FAILS
+    mock_verify.return_value = (False, "Failing test output")
+    mock_open_issue.return_value = {
+        "number": 58,
+        "html_url": "https://github.com/test-owner/test-repo/issues/58",
+        "title": "[Suggestion] docs: add docstrings to github_tools.py",
+    }
+
+    from agent.tools.improvement_advisor import ImprovementProposal
+    proposal = ImprovementProposal(
+        improvement_type="docstrings",
+        target_file="agent/tools/github_tools.py",
+        title="docs: add docstrings to github_tools.py",
+        description="Documents function inputs and outputs",
+        changes={"agent/tools/github_tools.py": "# updated"},
+        confidence=0.95,
+    )
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run(candidate_improvement=proposal)
+
+    # Must NOT open a PR on failure
+    mock_open_pr.assert_not_called()
+    # Must fallback to opening an issue
+    mock_open_issue.assert_called_once()
+    assert len(summary.findings) == 1
+    finding = summary.findings[0]
+    assert finding.type == "improvement"
+    assert finding.action_taken == "issue"
+    assert "verification" in finding.evidence.lower() or "tests failed" in finding.evidence.lower()
+
+
+@patch("agent.orchestrator.open_pr")
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+def test_decision_loop_improvement_frequency_capped_skipped(
+    mock_get_repo_state, mock_get_stale, mock_check_deps, mock_open_pr, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    mock_check_deps.return_value = []
+
+    # Write a prior run log showing an improvement PR was just created
+    log_file = tmp_path / "run_log.json"
+    prior_log = {
+        "run_date": "2026-09-26T10:00:00Z",
+        "repo": "test-owner/test-repo",
+        "findings": [{"type": "improvement", "action_taken": "pr", "evidence": "earlier pr"}],
+        "summary": "Opened PR",
+    }
+    log_file.write_text(json.dumps(prior_log))
+
+    from agent.tools.improvement_advisor import ImprovementProposal
+    proposal = ImprovementProposal(
+        improvement_type="docstrings",
+        target_file="agent/tools/github_tools.py",
+        title="docs: add docstrings",
+        description="Docstring improvement",
+        changes={},
+        confidence=0.9,
+    )
+
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run(candidate_improvement=proposal)
+
+    mock_open_pr.assert_not_called()
+    assert len(summary.findings) == 0
+    assert "no action needed" in summary.summary.lower()

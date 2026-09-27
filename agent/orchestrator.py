@@ -16,6 +16,12 @@ from agent.tools.github_tools import (
     open_pr,
 )
 from agent.tools.dependency_checker import check_outdated_dependencies
+from agent.tools.improvement_advisor import (
+    ALLOWED_IMPROVEMENT_TYPES,
+    ImprovementProposal,
+    is_frequency_capped,
+    verify_changes_with_tests,
+)
 
 load_dotenv()
 
@@ -69,6 +75,21 @@ class DevOpsOrchestrator:
             return self.prompt_path.read_text(encoding="utf-8")
         return "DevOps Copilot Orchestrator Prompt"
 
+    def _load_run_history(self) -> List[Dict[str, Any]]:
+        """Load recent run logs for frequency capping and auditability."""
+        if not self.log_path.exists():
+            return []
+        try:
+            content = self.log_path.read_text(encoding="utf-8")
+            data = json.loads(content)
+            if isinstance(data, list):
+                return data
+            elif isinstance(data, dict):
+                return [data]
+        except Exception:
+            pass
+        return []
+
     def _check_duplicate_issue(self, open_issues: List[Dict[str, Any]], keywords: List[str]) -> Optional[Dict[str, Any]]:
         """Check if an open issue already addresses this finding to prevent spam."""
         for issue in open_issues:
@@ -82,6 +103,7 @@ class DevOpsOrchestrator:
         repo_state: Dict[str, Any],
         stale_branches: List[Dict[str, Any]],
         outdated_deps: Optional[List[Dict[str, Any]]] = None,
+        candidate_improvement: Optional[ImprovementProposal] = None,
     ) -> Tuple[List[RunFinding], str]:
         """Core decision loop following orchestrator rules."""
         findings: List[RunFinding] = []
@@ -264,11 +286,105 @@ class DevOpsOrchestrator:
                 )
                 return findings, f"Opened issue #{created_issue.get('number')} for {len(outdated_deps)} outdated dependency(ies)."
 
-        # 4. Quiet run: No action needed
+        # 4. Improvement Suggestion Task (Constrained Scope, Frequency Capped, Pre-PR Verified)
+        if candidate_improvement:
+            # Frequency Cap Guardrail
+            history = self._load_run_history()
+            if is_frequency_capped(history, cooldown_runs=3):
+                # Frequency capped: skip to avoid flooding
+                pass
+            else:
+                # Pre-PR Test Verification Guardrail
+                passed, test_output = verify_changes_with_tests(candidate_improvement.changes)
+
+                # High-Confidence Gate
+                if passed and candidate_improvement.confidence >= 0.8:
+                    branch_name = f"devops-copilot/{candidate_improvement.improvement_type}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+                    pr_body = (
+                        f"## DevOps Copilot Improvement: {candidate_improvement.title}\n\n"
+                        f"**Category:** `{candidate_improvement.improvement_type}`\n"
+                        f"**Target File:** `{candidate_improvement.target_file}`\n\n"
+                        f"### Why This Change Was Proposed\n{candidate_improvement.description}\n\n"
+                        f"### Pre-PR Verification\n- [x] Local test suite ran against changes and passed.\n"
+                    )
+                    if self.dry_run:
+                        findings.append(
+                            RunFinding(
+                                type="improvement",
+                                evidence=f"[DRY RUN] Would open PR for {candidate_improvement.title}",
+                                action_taken="dry_run_pr",
+                                reference=f"dry_run://{self.repo}/pulls/{candidate_improvement.title}",
+                            )
+                        )
+                        return findings, f"[DRY RUN] Would open PR: {candidate_improvement.title}"
+
+                    created_pr = open_pr(
+                        repo=self.repo,
+                        title=candidate_improvement.title,
+                        body=pr_body,
+                        branch=branch_name,
+                        base=default_branch,
+                        changes=candidate_improvement.changes,
+                        token=self.token,
+                    )
+                    findings.append(
+                        RunFinding(
+                            type="improvement",
+                            evidence=f"Proposed {candidate_improvement.improvement_type} in {candidate_improvement.target_file} (tests verified)",
+                            action_taken="pr",
+                            reference=created_pr.get("html_url"),
+                        )
+                    )
+                    return findings, f"Opened PR #{created_pr.get('number')} for {candidate_improvement.improvement_type}."
+
+                else:
+                    # Low-Confidence Fallback Rule: Open an issue, NEVER open a broken/unconfident PR
+                    issue_title = f"[Suggestion] {candidate_improvement.title}"
+                    issue_body = (
+                        f"## DevOps Copilot Improvement Suggestion\n\n"
+                        f"**Category:** `{candidate_improvement.improvement_type}`\n"
+                        f"**Target File:** `{candidate_improvement.target_file}`\n"
+                        f"**Confidence:** `{candidate_improvement.confidence:.2f}`\n\n"
+                        f"### Description\n{candidate_improvement.description}\n\n"
+                        f"### Pre-PR Verification Status\n"
+                        f"A pull request was **not** opened due to safety guardrails:\n"
+                        f"- Tests passed: `{passed}`\n"
+                        f"- Test details: `{test_output}`\n\n"
+                        f"Please review this suggestion manually."
+                    )
+                    if self.dry_run:
+                        findings.append(
+                            RunFinding(
+                                type="improvement",
+                                evidence=f"[DRY RUN] Low confidence fallback: would open issue for {candidate_improvement.title}",
+                                action_taken="dry_run_issue",
+                                reference=f"dry_run://{self.repo}/issues/{issue_title}",
+                            )
+                        )
+                        return findings, f"[DRY RUN] Would open suggestion issue (fallback): {issue_title}"
+
+                    created_issue = open_issue(
+                        repo=self.repo,
+                        title=issue_title,
+                        body=issue_body,
+                        labels=["devops-copilot", "improvement-suggestion"],
+                        token=self.token,
+                    )
+                    findings.append(
+                        RunFinding(
+                            type="improvement",
+                            evidence=f"Pre-PR verification tests failed or low confidence ({candidate_improvement.confidence}): {test_output}",
+                            action_taken="issue",
+                            reference=created_issue.get("html_url"),
+                        )
+                    )
+                    return findings, f"Opened suggestion issue #{created_issue.get('number')} (fallback) for {candidate_improvement.improvement_type}."
+
+        # 5. Quiet run: No action needed
         summary_msg = "No action needed this run. Repository is healthy."
         return findings, summary_msg
 
-    def run(self) -> RunSummary:
+    def run(self, candidate_improvement: Optional[ImprovementProposal] = None) -> RunSummary:
         """Execute one complete orchestrator cycle."""
         now_str = datetime.now(timezone.utc).isoformat()
         if not self.repo:
@@ -286,7 +402,12 @@ class DevOpsOrchestrator:
         outdated_deps = check_outdated_dependencies(dependencies)
 
         # 2. Run decision loop
-        findings, summary_text = self.decide(repo_state, stale_branches, outdated_deps=outdated_deps)
+        findings, summary_text = self.decide(
+            repo_state,
+            stale_branches,
+            outdated_deps=outdated_deps,
+            candidate_improvement=candidate_improvement,
+        )
 
         summary = RunSummary(
             run_date=now_str,

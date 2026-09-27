@@ -1,0 +1,32 @@
+{
+  "id": "case_09_worthwhile_improvement",
+  "description": "High-confidence worthwhile docstrings improvement proposal with passing tests",
+  "repo_state": {
+    "repo": "test-org/improvement-repo",
+    "default_branch": "main",
+    "description": "Repository ready for a clean docstring improvement",
+    "recent_commits": [],
+    "open_issues": [],
+    "open_prs": [],
+    "ci_status": {"status": "passing"},
+    "dependencies": {}
+  },
+  "stale_branches": [],
+  "cve_findings": {},
+  "outdated_deps": [],
+  "candidate_improvement": {
+    "improvement_type": "docstrings",
+    "target_file": "agent/tools/github_tools.py",
+    "title": "docs: document return types and parameters in github_tools.py",
+    "description": "Adds clear Google-style docstrings explaining return types and query parameters.",
+    "changes": {"agent/tools/github_tools.py": "# documented"},
+    "confidence": 0.95
+  },
+  "pre_pr_verification_pass": true,
+  "ground_truth": {
+    "should_flag": true,
+    "expected_action": "pr",
+    "expected_type": "improvement",
+    "is_worthwhile_improvement": true
+  }
+}

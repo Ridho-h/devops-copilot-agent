@@ -1,0 +1,40 @@
+{
+  "id": "case_03_high_cve",
+  "description": "High severity CVE detected in requests package",
+  "repo_state": {
+    "repo": "test-org/cve-repo",
+    "default_branch": "main",
+    "description": "Repository with vulnerable dependency",
+    "recent_commits": [],
+    "open_issues": [],
+    "open_prs": [],
+    "ci_status": {"status": "passing"},
+    "dependencies": {"requests": "==2.25.0"}
+  },
+  "stale_branches": [],
+  "cve_findings": {
+    "requests": {
+      "package": "requests",
+      "current_version": "2.25.0",
+      "highest_severity": "HIGH",
+      "recommended_fix": "2.31.0",
+      "advisories": [
+        {
+          "id": "GHSA-j8r2-6x86-q33q",
+          "cve_id": "CVE-2023-32681",
+          "summary": "Requests Proxy-Authorization Header Leak",
+          "severity": "HIGH",
+          "fixed_version": "2.31.0",
+          "advisory_url": "https://osv.dev/GHSA-j8r2-6x86-q33q"
+        }
+      ]
+    }
+  },
+  "outdated_deps": [],
+  "candidate_improvement": null,
+  "ground_truth": {
+    "should_flag": true,
+    "expected_action": "issue",
+    "expected_type": "cve_advisory"
+  }
+}

@@ -1,0 +1,35 @@
+name: Pull Request Eval & Verification
+
+on:
+  pull_request:
+    paths:
+      - 'agent/**'
+      - 'eval/**'
+      - 'tests/**'
+      - '.github/workflows/pr-eval.yml'
+  workflow_dispatch: {}
+
+jobs:
+  eval-check:
+    name: Run Unit Tests & Eval Quality Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r agent/requirements.txt
+
+      - name: Run Unit Tests
+        run: |
+          pytest -v
+
+      - name: Run Quality Gate Eval Harness (<=10% False Positive Threshold)
+        run: |
+          python eval/run_eval.py

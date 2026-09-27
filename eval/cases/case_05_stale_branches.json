@@ -1,0 +1,30 @@
+{
+  "id": "case_05_stale_branches",
+  "description": "Inactive branch with no commits for 50 days",
+  "repo_state": {
+    "repo": "test-org/stale-branch-repo",
+    "default_branch": "main",
+    "description": "Repository with stale branch",
+    "recent_commits": [],
+    "open_issues": [],
+    "open_prs": [],
+    "ci_status": {"status": "passing"},
+    "dependencies": {}
+  },
+  "stale_branches": [
+    {
+      "name": "abandoned-feature",
+      "sha": "sha_old_1",
+      "last_commit_date": "2026-08-01T00:00:00Z",
+      "days_inactive": 50
+    }
+  ],
+  "cve_findings": {},
+  "outdated_deps": [],
+  "candidate_improvement": null,
+  "ground_truth": {
+    "should_flag": true,
+    "expected_action": "issue",
+    "expected_type": "stale_branches"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "id": "case_08_ci_already_tracked",
+  "description": "Failing CI check that is already tracked by an open issue",
+  "repo_state": {
+    "repo": "test-org/tracked-ci-repo",
+    "default_branch": "main",
+    "description": "Repository where CI failure already has an open issue",
+    "recent_commits": [],
+    "open_issues": [
+      {
+        "number": 42,
+        "title": "CI failing on main (Build)",
+        "html_url": "https://github.com/test-org/tracked-ci-repo/issues/42"
+      }
+    ],
+    "open_prs": [],
+    "ci_status": {
+      "status": "failing",
+      "latest_run": 505,
+      "latest_conclusion": "failure",
+      "failing_runs": [{"id": 505, "name": "Build", "head_branch": "main"}]
+    },
+    "dependencies": {}
+  },
+  "stale_branches": [],
+  "cve_findings": {},
+  "outdated_deps": [],
+  "candidate_improvement": null,
+  "ground_truth": {
+    "should_flag": false,
+    "expected_action": "none",
+    "expected_type": "ci_failure"
+  }
+}

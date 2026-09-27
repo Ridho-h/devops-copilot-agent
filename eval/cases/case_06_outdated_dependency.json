@@ -1,0 +1,30 @@
+{
+  "id": "case_06_outdated_dependency",
+  "description": "Outdated dependency pinned behind latest release",
+  "repo_state": {
+    "repo": "test-org/outdated-dep-repo",
+    "default_branch": "main",
+    "description": "Repository with outdated dependency",
+    "recent_commits": [],
+    "open_issues": [],
+    "open_prs": [],
+    "ci_status": {"status": "passing"},
+    "dependencies": {"urllib3": "==1.26.5"}
+  },
+  "stale_branches": [],
+  "cve_findings": {},
+  "outdated_deps": [
+    {
+      "package": "urllib3",
+      "current_version": "1.26.5",
+      "latest_version": "2.2.3",
+      "is_outdated": true
+    }
+  ],
+  "candidate_improvement": null,
+  "ground_truth": {
+    "should_flag": true,
+    "expected_action": "issue",
+    "expected_type": "outdated_dependencies"
+  }
+}

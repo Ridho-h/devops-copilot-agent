@@ -56,7 +56,12 @@ Out of scope for v1 (planned for v2):
 
 ### Phase 7 — Eval harness
 - Build a small eval set: known-good and known-bad repo states, check the orchestrator makes the right call (open issue / open PR / do nothing)
-- Track false positive rate (agent flags non-issues) as the key quality metric
+- Fixture-based, not live repos: eval cases use recorded/synthetic GitHub API and registry responses (mocked, like the existing unit tests), not live calls to real repos — deterministic and repeatable on every run, no API cost
+- Per-finding-type definition of a false positive:
+  - `ci_failure`, `cve_advisory`, `outdated_dependencies` — deterministic; a false positive here is a tool-function bug (wrong parsing/comparison), tested with fixed input/output fixture pairs
+  - `improvement` — judgment-based; a false positive is proposing something trivial or unhelpful even when tests pass. Requires a hand-reviewed case set (human-labeled "worth suggesting" vs "not worth it"), not just assert-equal checks
+- Concrete threshold: false positive rate must stay under 10% across the eval set to pass; `run_eval.py` exits non-zero if exceeded
+- CI integration: add a step (or a second lightweight workflow) that runs `eval/run_eval.py` on every PR touching `agent/`, so future orchestrator changes can't silently regress the false-positive rate
 
 ### Phase 8 — Deployment
 - GitHub Actions workflow per repo, scheduled weekly

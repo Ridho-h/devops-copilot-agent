@@ -1,0 +1,23 @@
+{
+  "id": "case_04_low_cve_ignored",
+  "description": "Package has only LOW severity CVE which must be filtered out",
+  "repo_state": {
+    "repo": "test-org/low-cve-repo",
+    "default_branch": "main",
+    "description": "Repository with low severity advisory",
+    "recent_commits": [],
+    "open_issues": [],
+    "open_prs": [],
+    "ci_status": {"status": "passing"},
+    "dependencies": {"some-pkg": "==1.0.0"}
+  },
+  "stale_branches": [],
+  "cve_findings": {},
+  "outdated_deps": [],
+  "candidate_improvement": null,
+  "ground_truth": {
+    "should_flag": false,
+    "expected_action": "none",
+    "expected_type": "none"
+  }
+}

@@ -288,9 +288,10 @@ class DevOpsOrchestrator:
 
         # 4. Improvement Suggestion Task (Constrained Scope, Frequency Capped, Pre-PR Verified)
         if candidate_improvement:
-            # Frequency Cap Guardrail
+            # Frequency Cap Guardrail: Checks both live GitHub PRs and local history
             history = self._load_run_history()
-            if is_frequency_capped(history, cooldown_runs=3):
+            recent_prs = repo_state.get("open_prs", [])
+            if is_frequency_capped(history=history, recent_prs=recent_prs, cooldown_days=14, cooldown_runs=3):
                 # Frequency capped: skip to avoid flooding
                 pass
             else:

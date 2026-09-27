@@ -37,14 +37,41 @@ class ImprovementProposal(BaseModel):
 
 
 def is_frequency_capped(
-    history: List[Dict[str, Any]], cooldown_runs: int = 3
+    history: Optional[List[Dict[str, Any]]] = None,
+    recent_prs: Optional[List[Dict[str, Any]]] = None,
+    cooldown_days: int = 14,
+    cooldown_runs: int = 3,
 ) -> bool:
-    """Check if an improvement was proposed within the last cooldown_runs."""
-    recent_runs = history[:cooldown_runs]
-    for run in recent_runs:
-        for finding in run.get("findings", []):
-            if finding.get("type") == "improvement" and finding.get("action_taken") in ("pr", "issue"):
-                return True
+    """Check if an improvement was proposed recently (via GitHub PRs or local run history).
+
+    Works seamlessly in ephemeral GitHub Actions by inspecting recent PRs from the bot.
+    """
+    from datetime import datetime, timezone
+
+    # 1. Check live GitHub PR history (primary mechanism in CI/ephemeral runners)
+    if recent_prs:
+        now = datetime.now(timezone.utc)
+        for pr in recent_prs:
+            head_ref = pr.get("head", {}).get("ref", "")
+            title = pr.get("title", "")
+            if head_ref.startswith("devops-copilot/") or "DevOps Copilot Improvement:" in title:
+                created_at_str = pr.get("created_at")
+                if created_at_str:
+                    try:
+                        created_at = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                        if (now - created_at).days < cooldown_days:
+                            return True
+                    except Exception:
+                        return True
+
+    # 2. Check local run log history (for local development or file-backed runs)
+    if history:
+        recent_runs = history[:cooldown_runs]
+        for run in recent_runs:
+            for finding in run.get("findings", []):
+                if finding.get("type") == "improvement" and finding.get("action_taken") in ("pr", "issue"):
+                    return True
+
     return False
 
 

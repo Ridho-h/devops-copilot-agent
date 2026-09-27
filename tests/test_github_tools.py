@@ -12,6 +12,7 @@ from agent.tools.github_tools import (
     get_repo_state,
     open_issue,
     open_pr,
+    get_rate_limit,
 )
 
 
@@ -277,3 +278,40 @@ def test_get_repo_state(mock_deps, mock_ci, mock_prs, mock_issues, mock_commits,
     assert len(state["open_prs"]) == 1
     assert state["ci_status"]["status"] == "passing"
     assert state["dependencies"]["pytest"] == "*"
+
+
+@patch("agent.tools.github_tools.requests.request")
+def test_get_rate_limit(mock_request):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {
+        "resources": {
+            "core": {
+                "limit": 5000,
+                "remaining": 4990,
+                "reset": 1700000000,
+                "used": 10,
+            }
+        }
+    }
+    mock_request.return_value = mock_resp
+
+    rl = get_rate_limit(token="test-token")
+    assert rl["core"]["remaining"] == 4990
+    assert rl["core"]["limit"] == 5000
+
+
+@patch("agent.tools.github_tools.requests.request")
+def test_list_dependencies_no_manifests(mock_request):
+    mock_resp = MagicMock()
+    mock_resp.status_code = 404
+    mock_resp.json.return_value = {"message": "Not Found"}
+    mock_request.return_value = mock_resp
+
+    deps = list_dependencies("owner/repo", token="test-token")
+    assert deps == {}
+
+
+def test_open_pr_same_branch_raises_value_error():
+    with pytest.raises(ValueError, match="cannot be identical"):
+        open_pr("owner/repo", "Title", "Body", branch="main", base="main", token="test-token")

@@ -64,6 +64,13 @@ def _get_client(token: Optional[str] = None) -> GitHubClient:
     return GitHubClient(token=token)
 
 
+def get_rate_limit(token: Optional[str] = None) -> Dict[str, Any]:
+    """Check remaining GitHub API rate limits."""
+    client = _get_client(token)
+    data = client.get("/rate_limit")
+    return data.get("resources", {})
+
+
 def get_repo_info(repo: str, token: Optional[str] = None) -> Dict[str, Any]:
     """Fetch repository metadata."""
     client = _get_client(token)

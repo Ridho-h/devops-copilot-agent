@@ -10,6 +10,7 @@ from agent.tools.github_tools import (
     get_repo_state,
     open_issue,
     get_stale_branches,
+    get_rate_limit,
 )
 
 
@@ -32,6 +33,13 @@ def main():
         print("Note: GITHUB_TOKEN not set. Running unauthenticated (public repos only, rate-limited to 60 req/hr).")
     else:
         print("GITHUB_TOKEN detected.")
+
+    try:
+        limits = get_rate_limit(token)
+        core = limits.get("core", {})
+        print(f"Rate Limit: {core.get('remaining')}/{core.get('limit')} remaining (resets at {core.get('reset')})")
+    except Exception as e:
+        print(f"Could not check rate limit: {e}")
 
     try:
         state = get_repo_state(repo, token=token)

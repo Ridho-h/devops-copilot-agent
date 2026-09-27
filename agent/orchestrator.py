@@ -16,6 +16,7 @@ from agent.tools.github_tools import (
     open_pr,
 )
 from agent.tools.dependency_checker import check_outdated_dependencies
+from agent.tools.cve_scanner import scan_dependencies_for_cves
 from agent.tools.improvement_advisor import (
     ALLOWED_IMPROVEMENT_TYPES,
     ImprovementProposal,
@@ -104,6 +105,7 @@ class DevOpsOrchestrator:
         stale_branches: List[Dict[str, Any]],
         outdated_deps: Optional[List[Dict[str, Any]]] = None,
         candidate_improvement: Optional[ImprovementProposal] = None,
+        cve_findings: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Tuple[List[RunFinding], str]:
         """Core decision loop following orchestrator rules."""
         findings: List[RunFinding] = []
@@ -170,7 +172,68 @@ class DevOpsOrchestrator:
                 )
                 return findings, f"Opened issue #{created_issue.get('number')} for CI failure on {default_branch}."
 
-        # 2. Stale Branches Check
+        # 2. CVE Advisory Check (Security Risk: ranks ahead of stale branches and routine maintenance)
+        if cve_findings:
+            pkg_name, cve_info = next(iter(cve_findings.items()))
+            existing = self._check_duplicate_issue(open_issues, ["security vulnerability", pkg_name])
+            if existing:
+                findings.append(
+                    RunFinding(
+                        type="cve_advisory",
+                        evidence=f"Security vulnerability in {pkg_name} detected, but already tracked in issue #{existing.get('number')}",
+                        action_taken="none",
+                        reference=existing.get("html_url"),
+                    )
+                )
+                return findings, f"Security vulnerability in {pkg_name} already tracked in issue #{existing.get('number')}."
+            else:
+                adv_rows = "\n".join(
+                    [
+                        f"| [{a.get('cve_id')}]({a.get('advisory_url')}) | `{a.get('severity')}` | {a.get('summary')} | `{a.get('fixed_version') or 'Not specified'}` |"
+                        for a in cve_info.get("advisories", [])
+                    ]
+                )
+                issue_title = f"Security vulnerability in {pkg_name} ({cve_info.get('highest_severity')})"
+                issue_body = (
+                    f"## DevOps Copilot Security Alert: Vulnerability in `{pkg_name}`\n\n"
+                    f"A confirmed security vulnerability of **{cve_info.get('highest_severity')}** severity was detected in `{pkg_name}` (installed: `{cve_info.get('current_version')}`).\n\n"
+                    f"### Recommended Action\n"
+                    f"Update `{pkg_name}` to version `{cve_info.get('recommended_fix') or 'latest'}` or higher.\n\n"
+                    f"### Detected Advisories ({len(cve_info.get('advisories', []))} total)\n\n"
+                    f"| Advisory / CVE | Severity | Summary | Fixed In |\n"
+                    f"| :--- | :--- | :--- | :--- |\n"
+                    f"{adv_rows}\n"
+                )
+                if self.dry_run:
+                    findings.append(
+                        RunFinding(
+                            type="cve_advisory",
+                            evidence=f"[DRY RUN] Would open security issue for {pkg_name}: {cve_info.get('highest_severity')} ({len(cve_info.get('advisories', []))} advisories)",
+                            action_taken="dry_run_issue",
+                            reference=f"dry_run://{self.repo}/issues/{issue_title}",
+                        )
+                    )
+                    return findings, f"[DRY RUN] Would open security issue: {issue_title}"
+
+                created_issue = open_issue(
+                    repo=self.repo,
+                    title=issue_title,
+                    body=issue_body,
+                    labels=["devops-copilot", "security", "cve"],
+                    token=self.token,
+                )
+                cve_ids_str = ", ".join(a.get("cve_id", a.get("id")) for a in cve_info.get("advisories", []))
+                findings.append(
+                    RunFinding(
+                        type="cve_advisory",
+                        evidence=f"Confirmed security advisory in {pkg_name} ({cve_info.get('highest_severity')}): {cve_ids_str}",
+                        action_taken="issue",
+                        reference=created_issue.get("html_url"),
+                    )
+                )
+                return findings, f"Opened security issue #{created_issue.get('number')} for {pkg_name} ({cve_info.get('highest_severity')})."
+
+        # 3. Stale Branches Check
         if stale_branches:
             existing = self._check_duplicate_issue(open_issues, ["stale branches"])
             if existing:
@@ -225,14 +288,19 @@ class DevOpsOrchestrator:
                 )
                 return findings, f"Opened issue #{created_issue.get('number')} for {len(stale_branches)} stale branch(es)."
 
-        # 3. Outdated Dependencies Check
-        if outdated_deps:
+        # 4. Outdated Dependencies Check (with CVE overlap exclusion)
+        # Rule: if package has both a pending version bump and a known CVE, skip the separate outdated issue
+        filtered_outdated = [
+            d for d in (outdated_deps or [])
+            if not cve_findings or d["package"] not in cve_findings
+        ]
+        if filtered_outdated:
             existing = self._check_duplicate_issue(open_issues, ["outdated dependencies"])
             if existing:
                 findings.append(
                     RunFinding(
                         type="outdated_dependencies",
-                        evidence=f"Found {len(outdated_deps)} outdated dependency(ies), but already tracked in issue #{existing.get('number')}",
+                        evidence=f"Found {len(filtered_outdated)} outdated dependency(ies), but already tracked in issue #{existing.get('number')}",
                         action_taken="none",
                         reference=existing.get("html_url"),
                     )
@@ -242,10 +310,10 @@ class DevOpsOrchestrator:
                 dep_table_rows = "\n".join(
                     [
                         f"| `{d['package']}` | `{d['current_version']}` | `{d['latest_version']}` |"
-                        for d in outdated_deps
+                        for d in filtered_outdated
                     ]
                 )
-                issue_title = f"Outdated dependencies detected ({len(outdated_deps)} package(s))"
+                issue_title = f"Outdated dependencies detected ({len(filtered_outdated)} package(s))"
                 issue_body = (
                     f"## DevOps Copilot Health Report: Outdated Dependencies\n\n"
                     f"The following dependencies are pinned behind their latest versions:\n\n"
@@ -258,7 +326,7 @@ class DevOpsOrchestrator:
                     findings.append(
                         RunFinding(
                             type="outdated_dependencies",
-                            evidence=f"[DRY RUN] Would open issue for {len(outdated_deps)} outdated dependency(ies): {', '.join(d['package'] for d in outdated_deps)}",
+                            evidence=f"[DRY RUN] Would open issue for {len(filtered_outdated)} outdated dependency(ies): {', '.join(d['package'] for d in filtered_outdated)}",
                             action_taken="dry_run_issue",
                             reference=f"dry_run://{self.repo}/issues/{issue_title}",
                         )
@@ -274,17 +342,17 @@ class DevOpsOrchestrator:
                 )
                 dep_details = ", ".join(
                     f"{d['package']} ({d['current_version']} -> {d['latest_version']})"
-                    for d in outdated_deps
+                    for d in filtered_outdated
                 )
                 findings.append(
                     RunFinding(
                         type="outdated_dependencies",
-                        evidence=f"{len(outdated_deps)} dependency(ies) outdated: {dep_details}",
+                        evidence=f"{len(filtered_outdated)} dependency(ies) outdated: {dep_details}",
                         action_taken="issue",
                         reference=created_issue.get("html_url"),
                     )
                 )
-                return findings, f"Opened issue #{created_issue.get('number')} for {len(outdated_deps)} outdated dependency(ies)."
+                return findings, f"Opened issue #{created_issue.get('number')} for {len(filtered_outdated)} outdated dependency(ies)."
 
         # 4. Improvement Suggestion Task (Constrained Scope, Frequency Capped, Pre-PR Verified)
         if candidate_improvement:
@@ -400,6 +468,7 @@ class DevOpsOrchestrator:
             token=self.token,
         )
         dependencies = repo_state.get("dependencies", {})
+        cve_findings = scan_dependencies_for_cves(dependencies)
         outdated_deps = check_outdated_dependencies(dependencies)
 
         # 2. Run decision loop
@@ -408,6 +477,7 @@ class DevOpsOrchestrator:
             stale_branches,
             outdated_deps=outdated_deps,
             candidate_improvement=candidate_improvement,
+            cve_findings=cve_findings,
         )
 
         summary = RunSummary(

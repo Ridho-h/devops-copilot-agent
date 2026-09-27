@@ -49,7 +49,10 @@ Out of scope for v1 (planned for v2):
 
 ### Phase 6 — CVE monitoring task
 - Cross-reference dependency list against advisory sources
-- Opens an issue per confirmed vulnerability, with severity and suggested fix version
+- Priority order update: `cve_advisory` findings rank right after `ci_failure` and ahead of `stale_branches`, `outdated_dependencies`, and `improvement` — a known vulnerability is a security risk, not routine maintenance. Full order: `ci_failure` → `cve_advisory` → `stale_branches` → `outdated_dependencies` → `improvement` → `none`
+- Overlap with `outdated_dependencies`: if a package has both a pending version bump and a known CVE, skip the separate "outdated" issue for that package and file only the CVE issue (it's more urgent and implies an update anyway) — never file both for the same package in one run
+- Severity filtering: only file an issue for `medium` severity or above; dedupe multiple CVEs affecting the same package into a single issue listing all of them, rather than one issue per CVE
+- Opens an issue per confirmed vulnerability (post-filtering/dedupe), with severity and suggested fix version
 
 ### Phase 7 — Eval harness
 - Build a small eval set: known-good and known-bad repo states, check the orchestrator makes the right call (open issue / open PR / do nothing)

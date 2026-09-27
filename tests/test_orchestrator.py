@@ -373,3 +373,89 @@ def test_decision_loop_improvement_frequency_capped_skipped(
     mock_open_pr.assert_not_called()
     assert len(summary.findings) == 0
     assert "no action needed" in summary.summary.lower()
+
+
+@patch("agent.orchestrator.scan_dependencies_for_cves")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_cve_advisory_prioritized_over_stale_branches(
+    mock_open_issue, mock_get_repo_state, mock_get_stale, mock_scan_cves, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = [
+        {"name": "stale-branch", "sha": "123", "days_inactive": 40}
+    ]
+    mock_scan_cves.return_value = {
+        "requests": {
+            "package": "requests",
+            "current_version": "2.25.0",
+            "highest_severity": "HIGH",
+            "recommended_fix": "2.31.0",
+            "advisories": [
+                {"id": "GHSA-1", "cve_id": "CVE-2023-32681", "summary": "Header leak", "severity": "HIGH", "fixed_version": "2.31.0"}
+            ],
+        }
+    }
+    mock_open_issue.return_value = {
+        "number": 60,
+        "html_url": "https://github.com/test-owner/test-repo/issues/60",
+        "title": "Security vulnerability in requests (HIGH)",
+    }
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run()
+
+    # Rule: cve_advisory ranks ahead of stale_branches
+    assert len(summary.findings) == 1
+    finding = summary.findings[0]
+    assert finding.type == "cve_advisory"
+    assert finding.action_taken == "issue"
+    assert "CVE-2023-32681" in finding.evidence
+    mock_open_issue.assert_called_once()
+    assert "security vulnerability" in mock_open_issue.call_args[1]["title"].lower()
+
+
+@patch("agent.orchestrator.scan_dependencies_for_cves")
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_cve_advisory_suppresses_outdated_overlap(
+    mock_open_issue, mock_get_repo_state, mock_get_stale, mock_check_deps, mock_scan_cves, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    # Both CVE and outdated detected for requests
+    mock_check_deps.return_value = [
+        {"package": "requests", "current_version": "2.25.0", "latest_version": "2.31.0", "is_outdated": True}
+    ]
+    mock_scan_cves.return_value = {
+        "requests": {
+            "package": "requests",
+            "current_version": "2.25.0",
+            "highest_severity": "HIGH",
+            "recommended_fix": "2.31.0",
+            "advisories": [
+                {"id": "GHSA-1", "cve_id": "CVE-2023-32681", "summary": "Header leak", "severity": "HIGH", "fixed_version": "2.31.0"}
+            ],
+        }
+    }
+    mock_open_issue.return_value = {
+        "number": 61,
+        "html_url": "https://github.com/test-owner/test-repo/issues/61",
+        "title": "Security vulnerability in requests (HIGH)",
+    }
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run()
+
+    # Rule: overlap with outdated_dependencies -> skip separate outdated issue, file ONLY cve issue
+    assert len(summary.findings) == 1
+    assert summary.findings[0].type == "cve_advisory"
+    mock_open_issue.assert_called_once()
+    assert "security vulnerability" in mock_open_issue.call_args[1]["title"].lower()

@@ -1,0 +1,30 @@
+{
+  "id": "case_01_clean_healthy",
+  "description": "Completely clean and healthy repository",
+  "repo_state": {
+    "repo": "test-org/healthy-repo",
+    "default_branch": "main",
+    "description": "A healthy repository with green CI and clean deps",
+    "recent_commits": [{"sha": "abc1", "commit": {"message": "feat: init"}}],
+    "open_issues": [],
+    "open_prs": [],
+    "ci_status": {
+      "status": "passing",
+      "latest_run": 101,
+      "latest_conclusion": "success",
+      "latest_status": "completed",
+      "failing_runs": [],
+      "total_runs": 5
+    },
+    "dependencies": {"pytest": "==8.0.0"}
+  },
+  "stale_branches": [],
+  "cve_findings": {},
+  "outdated_deps": [],
+  "candidate_improvement": null,
+  "ground_truth": {
+    "should_flag": false,
+    "expected_action": "none",
+    "expected_type": "none"
+  }
+}

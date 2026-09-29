@@ -1,0 +1,38 @@
+{
+  "id": "case_11_frequency_capped_improvement",
+  "description": "Improvement candidate proposed on a repo that already had a bot PR opened 2 days ago — must skip due to frequency cap",
+  "repo_state": {
+    "repo": "test-org/frequent-repo",
+    "default_branch": "main",
+    "description": "Repository with a recent bot PR within cooldown",
+    "recent_commits": [],
+    "open_issues": [],
+    "open_prs": [
+      {
+        "number": 15,
+        "title": "DevOps Copilot Improvement: docstrings",
+        "head": {"ref": "devops-copilot/docstrings-20260925"},
+        "created_at": "2026-09-25T10:00:00Z"
+      }
+    ],
+    "ci_status": {"status": "passing"},
+    "dependencies": {}
+  },
+  "stale_branches": [],
+  "cve_findings": {},
+  "outdated_deps": [],
+  "candidate_improvement": {
+    "improvement_type": "docstrings",
+    "target_file": "agent/tools/github_tools.py",
+    "title": "docs: add more docstrings",
+    "description": "Another docstring update",
+    "changes": {},
+    "confidence": 0.95
+  },
+  "pre_pr_verification_pass": true,
+  "ground_truth": {
+    "should_flag": false,
+    "expected_action": "none",
+    "expected_type": "none"
+  }
+}

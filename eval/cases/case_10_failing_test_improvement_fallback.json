@@ -1,0 +1,32 @@
+{
+  "id": "case_10_failing_test_improvement_fallback",
+  "description": "Improvement candidate whose pre-PR test verification fails — must fall back to issue, never open PR",
+  "repo_state": {
+    "repo": "test-org/broken-improvement-repo",
+    "default_branch": "main",
+    "description": "Repository evaluating an unverified improvement",
+    "recent_commits": [],
+    "open_issues": [],
+    "open_prs": [],
+    "ci_status": {"status": "passing"},
+    "dependencies": {}
+  },
+  "stale_branches": [],
+  "cve_findings": {},
+  "outdated_deps": [],
+  "candidate_improvement": {
+    "improvement_type": "type_hints",
+    "target_file": "agent/tools/github_tools.py",
+    "title": "refactor: add strict type hints",
+    "description": "Adds type annotations that cause a test suite breakage",
+    "changes": {"agent/tools/github_tools.py": "# broken type annotation"},
+    "confidence": 0.6
+  },
+  "pre_pr_verification_pass": false,
+  "ground_truth": {
+    "should_flag": true,
+    "expected_action": "issue",
+    "expected_type": "improvement",
+    "is_worthwhile_improvement": false
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "id": "case_02_ci_failure",
+  "description": "Failing CI workflow on main branch",
+  "repo_state": {
+    "repo": "test-org/broken-ci-repo",
+    "default_branch": "main",
+    "description": "Repository with failing CI check",
+    "recent_commits": [{"sha": "abc2", "commit": {"message": "feat: broken changes"}}],
+    "open_issues": [],
+    "open_prs": [],
+    "ci_status": {
+      "status": "failing",
+      "latest_run": 202,
+      "latest_conclusion": "failure",
+      "latest_status": "completed",
+      "failing_runs": [
+        {
+          "id": 202,
+          "name": "Integration Test",
+          "head_branch": "main",
+          "conclusion": "failure",
+          "html_url": "https://github.com/test-org/broken-ci-repo/actions/runs/202"
+        }
+      ],
+      "total_runs": 10
+    },
+    "dependencies": {}
+  },
+  "stale_branches": [],
+  "cve_findings": {},
+  "outdated_deps": [],
+  "candidate_improvement": null,
+  "ground_truth": {
+    "should_flag": true,
+    "expected_action": "issue",
+    "expected_type": "ci_failure"
+  }
+}

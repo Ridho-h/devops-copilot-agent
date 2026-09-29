@@ -1,0 +1,461 @@
+import json
+import pytest
+from unittest.mock import MagicMock, patch
+from agent.orchestrator import DevOpsOrchestrator, RunFinding, RunSummary
+
+
+@pytest.fixture
+def mock_clean_repo_state():
+    return {
+        "repo": "test-owner/test-repo",
+        "default_branch": "main",
+        "description": "Clean test repository",
+        "recent_commits": [{"sha": "sha1", "commit": {"message": "feat: clean"}}],
+        "open_issues": [],
+        "open_prs": [],
+        "ci_status": {
+            "status": "passing",
+            "latest_run": 100,
+            "latest_conclusion": "success",
+            "latest_status": "completed",
+            "failing_runs": [],
+            "total_runs": 1,
+        },
+        "dependencies": {},
+    }
+
+
+@pytest.fixture
+def mock_failing_ci_repo_state():
+    return {
+        "repo": "test-owner/test-repo",
+        "default_branch": "main",
+        "description": "Repo with failing CI",
+        "recent_commits": [{"sha": "sha1", "commit": {"message": "feat: broken"}}],
+        "open_issues": [],
+        "open_prs": [],
+        "ci_status": {
+            "status": "failing",
+            "latest_run": 105,
+            "latest_conclusion": "failure",
+            "latest_status": "completed",
+            "failing_runs": [
+                {
+                    "id": 105,
+                    "name": "Build & Test",
+                    "head_branch": "main",
+                    "conclusion": "failure",
+                    "html_url": "https://github.com/test-owner/test-repo/actions/runs/105",
+                    "created_at": "2026-09-26T10:00:00Z",
+                }
+            ],
+            "total_runs": 2,
+        },
+        "dependencies": {},
+    }
+
+
+def test_orchestrator_initialization():
+    orchestrator = DevOpsOrchestrator(repo="owner/repo", token="dummy-token", api_key="dummy-key")
+    assert orchestrator.repo == "owner/repo"
+    assert orchestrator.token == "dummy-token"
+
+
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_clean_repo_does_nothing(
+    mock_open_issue, mock_get_repo_state, mock_get_stale, mock_check_deps, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    mock_check_deps.return_value = []
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run()
+
+    # Rule: A quiet run is a correct outcome, not a failure.
+    assert summary.repo == "test-owner/test-repo"
+    assert len(summary.findings) == 0
+    assert "no action needed" in summary.summary.lower()
+    mock_open_issue.assert_not_called()
+
+    # Verify log file was written
+    assert log_file.exists()
+    saved_log = json.loads(log_file.read_text())
+    assert saved_log["repo"] == "test-owner/test-repo"
+    assert len(saved_log["findings"]) == 0
+
+
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_ci_failure_opens_issue(mock_open_issue, mock_get_repo_state, mock_get_stale, mock_failing_ci_repo_state, tmp_path):
+    mock_get_repo_state.return_value = mock_failing_ci_repo_state
+    mock_get_stale.return_value = []
+    mock_open_issue.return_value = {
+        "number": 55,
+        "html_url": "https://github.com/test-owner/test-repo/issues/55",
+        "title": "CI failing on main",
+    }
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run()
+
+    # Check that CI failure took priority and triggered open_issue
+    assert len(summary.findings) == 1
+    finding = summary.findings[0]
+    assert finding.type == "ci_failure"
+    assert finding.action_taken == "issue"
+    assert finding.reference == "https://github.com/test-owner/test-repo/issues/55"
+    mock_open_issue.assert_called_once()
+    assert "CI failing on main" in mock_open_issue.call_args[1]["title"]
+
+
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_prevents_duplicate_issue(mock_open_issue, mock_get_repo_state, mock_get_stale, mock_failing_ci_repo_state, tmp_path):
+    # Already have an open issue about CI failing
+    mock_failing_ci_repo_state["open_issues"] = [
+        {"number": 50, "title": "CI failing on main", "html_url": "https://github.com/test-owner/test-repo/issues/50"}
+    ]
+    mock_get_repo_state.return_value = mock_failing_ci_repo_state
+    mock_get_stale.return_value = []
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run()
+
+    # Should recognize existing issue and NOT open a duplicate issue
+    mock_open_issue.assert_not_called()
+    assert len(summary.findings) == 1
+    assert summary.findings[0].action_taken == "none"
+    assert "already open" in summary.findings[0].evidence.lower() or "duplicate" in summary.findings[0].evidence.lower()
+
+
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_stale_branches_opens_issue(
+    mock_open_issue, mock_get_repo_state, mock_get_stale, mock_check_deps, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = [
+        {"name": "old-feature", "sha": "12345", "days_inactive": 45, "last_commit_date": "2026-08-01T00:00:00Z"}
+    ]
+    mock_check_deps.return_value = []
+    mock_open_issue.return_value = {
+        "number": 56,
+        "html_url": "https://github.com/test-owner/test-repo/issues/56",
+        "title": "Stale branches detected",
+    }
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run()
+
+    assert len(summary.findings) == 1
+    finding = summary.findings[0]
+    assert finding.type == "stale_branches"
+    assert finding.action_taken == "issue"
+    mock_open_issue.assert_called_once()
+    assert "stale" in mock_open_issue.call_args[1]["title"].lower()
+
+
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_dry_run_mode(mock_open_issue, mock_get_repo_state, mock_get_stale, mock_failing_ci_repo_state, tmp_path):
+    mock_get_repo_state.return_value = mock_failing_ci_repo_state
+    mock_get_stale.return_value = []
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file), dry_run=True)
+
+    summary = orchestrator.run()
+
+    # In dry run mode, open_issue should NOT be called over the network
+    mock_open_issue.assert_not_called()
+    assert len(summary.findings) == 1
+    assert "dry_run" in summary.findings[0].action_taken
+
+
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_outdated_dependencies_opens_issue(
+    mock_open_issue, mock_get_repo_state, mock_get_stale, mock_check_deps, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    mock_check_deps.return_value = [
+        {"package": "requests", "current_version": "2.25.0", "latest_version": "2.31.0", "is_outdated": True}
+    ]
+    mock_open_issue.return_value = {
+        "number": 57,
+        "html_url": "https://github.com/test-owner/test-repo/issues/57",
+        "title": "Outdated dependencies detected (1 package(s))",
+    }
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run()
+
+    assert len(summary.findings) == 1
+    finding = summary.findings[0]
+    assert finding.type == "outdated_dependencies"
+    assert finding.action_taken == "issue"
+    assert "requests" in finding.evidence
+    mock_open_issue.assert_called_once()
+    assert "outdated dependencies" in mock_open_issue.call_args[1]["title"].lower()
+
+
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_outdated_dependencies_duplicate_suppression(
+    mock_open_issue, mock_get_repo_state, mock_get_stale, mock_check_deps, mock_clean_repo_state, tmp_path
+):
+    mock_clean_repo_state["open_issues"] = [
+        {"number": 52, "title": "Outdated dependencies detected (1 package(s))", "html_url": "https://github.com/test-owner/test-repo/issues/52"}
+    ]
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    mock_check_deps.return_value = [
+        {"package": "requests", "current_version": "2.25.0", "latest_version": "2.31.0", "is_outdated": True}
+    ]
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run()
+
+    mock_open_issue.assert_not_called()
+    assert len(summary.findings) == 1
+    assert summary.findings[0].action_taken == "none"
+    assert "already tracked" in summary.findings[0].evidence.lower() or "already open" in summary.findings[0].evidence.lower()
+
+
+@patch("agent.orchestrator.open_pr")
+@patch("agent.orchestrator.verify_changes_with_tests")
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+def test_decision_loop_improvement_high_confidence_opens_pr(
+    mock_get_repo_state, mock_get_stale, mock_check_deps, mock_verify, mock_open_pr, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    mock_check_deps.return_value = []
+    mock_verify.return_value = (True, "All tests passed")
+    mock_open_pr.return_value = {
+        "number": 12,
+        "html_url": "https://github.com/test-owner/test-repo/pull/12",
+        "title": "docs: add docstrings to github_tools.py",
+    }
+
+    from agent.tools.improvement_advisor import ImprovementProposal
+    proposal = ImprovementProposal(
+        improvement_type="docstrings",
+        target_file="agent/tools/github_tools.py",
+        title="docs: add docstrings to github_tools.py",
+        description="Documents function inputs and outputs",
+        changes={"agent/tools/github_tools.py": "# updated"},
+        confidence=0.95,
+    )
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run(candidate_improvement=proposal)
+
+    assert len(summary.findings) == 1
+    finding = summary.findings[0]
+    assert finding.type == "improvement"
+    assert finding.action_taken == "pr"
+    assert finding.reference == "https://github.com/test-owner/test-repo/pull/12"
+    mock_open_pr.assert_called_once()
+
+
+@patch("agent.orchestrator.open_issue")
+@patch("agent.orchestrator.open_pr")
+@patch("agent.orchestrator.verify_changes_with_tests")
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+def test_decision_loop_improvement_low_confidence_fallback_opens_issue(
+    mock_get_repo_state, mock_get_stale, mock_check_deps, mock_verify, mock_open_pr, mock_open_issue, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    mock_check_deps.return_value = []
+    # Pre-PR test verification FAILS
+    mock_verify.return_value = (False, "Failing test output")
+    mock_open_issue.return_value = {
+        "number": 58,
+        "html_url": "https://github.com/test-owner/test-repo/issues/58",
+        "title": "[Suggestion] docs: add docstrings to github_tools.py",
+    }
+
+    from agent.tools.improvement_advisor import ImprovementProposal
+    proposal = ImprovementProposal(
+        improvement_type="docstrings",
+        target_file="agent/tools/github_tools.py",
+        title="docs: add docstrings to github_tools.py",
+        description="Documents function inputs and outputs",
+        changes={"agent/tools/github_tools.py": "# updated"},
+        confidence=0.95,
+    )
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run(candidate_improvement=proposal)
+
+    # Must NOT open a PR on failure
+    mock_open_pr.assert_not_called()
+    # Must fallback to opening an issue
+    mock_open_issue.assert_called_once()
+    assert len(summary.findings) == 1
+    finding = summary.findings[0]
+    assert finding.type == "improvement"
+    assert finding.action_taken == "issue"
+    assert "verification" in finding.evidence.lower() or "tests failed" in finding.evidence.lower()
+
+
+@patch("agent.orchestrator.open_pr")
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+def test_decision_loop_improvement_frequency_capped_skipped(
+    mock_get_repo_state, mock_get_stale, mock_check_deps, mock_open_pr, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    mock_check_deps.return_value = []
+
+    # Write a prior run log showing an improvement PR was just created
+    log_file = tmp_path / "run_log.json"
+    prior_log = {
+        "run_date": "2026-09-26T10:00:00Z",
+        "repo": "test-owner/test-repo",
+        "findings": [{"type": "improvement", "action_taken": "pr", "evidence": "earlier pr"}],
+        "summary": "Opened PR",
+    }
+    log_file.write_text(json.dumps(prior_log))
+
+    from agent.tools.improvement_advisor import ImprovementProposal
+    proposal = ImprovementProposal(
+        improvement_type="docstrings",
+        target_file="agent/tools/github_tools.py",
+        title="docs: add docstrings",
+        description="Docstring improvement",
+        changes={},
+        confidence=0.9,
+    )
+
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run(candidate_improvement=proposal)
+
+    mock_open_pr.assert_not_called()
+    assert len(summary.findings) == 0
+    assert "no action needed" in summary.summary.lower()
+
+
+@patch("agent.orchestrator.scan_dependencies_for_cves")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_cve_advisory_prioritized_over_stale_branches(
+    mock_open_issue, mock_get_repo_state, mock_get_stale, mock_scan_cves, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = [
+        {"name": "stale-branch", "sha": "123", "days_inactive": 40}
+    ]
+    mock_scan_cves.return_value = {
+        "requests": {
+            "package": "requests",
+            "current_version": "2.25.0",
+            "highest_severity": "HIGH",
+            "recommended_fix": "2.31.0",
+            "advisories": [
+                {"id": "GHSA-1", "cve_id": "CVE-2023-32681", "summary": "Header leak", "severity": "HIGH", "fixed_version": "2.31.0"}
+            ],
+        }
+    }
+    mock_open_issue.return_value = {
+        "number": 60,
+        "html_url": "https://github.com/test-owner/test-repo/issues/60",
+        "title": "Security vulnerability in requests (HIGH)",
+    }
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run()
+
+    # Rule: cve_advisory ranks ahead of stale_branches
+    assert len(summary.findings) == 1
+    finding = summary.findings[0]
+    assert finding.type == "cve_advisory"
+    assert finding.action_taken == "issue"
+    assert "CVE-2023-32681" in finding.evidence
+    mock_open_issue.assert_called_once()
+    assert "security vulnerability" in mock_open_issue.call_args[1]["title"].lower()
+
+
+@patch("agent.orchestrator.scan_dependencies_for_cves")
+@patch("agent.orchestrator.check_outdated_dependencies")
+@patch("agent.orchestrator.get_stale_branches")
+@patch("agent.orchestrator.get_repo_state")
+@patch("agent.orchestrator.open_issue")
+def test_decision_loop_cve_advisory_suppresses_outdated_overlap(
+    mock_open_issue, mock_get_repo_state, mock_get_stale, mock_check_deps, mock_scan_cves, mock_clean_repo_state, tmp_path
+):
+    mock_get_repo_state.return_value = mock_clean_repo_state
+    mock_get_stale.return_value = []
+    # Both CVE and outdated detected for requests
+    mock_check_deps.return_value = [
+        {"package": "requests", "current_version": "2.25.0", "latest_version": "2.31.0", "is_outdated": True}
+    ]
+    mock_scan_cves.return_value = {
+        "requests": {
+            "package": "requests",
+            "current_version": "2.25.0",
+            "highest_severity": "HIGH",
+            "recommended_fix": "2.31.0",
+            "advisories": [
+                {"id": "GHSA-1", "cve_id": "CVE-2023-32681", "summary": "Header leak", "severity": "HIGH", "fixed_version": "2.31.0"}
+            ],
+        }
+    }
+    mock_open_issue.return_value = {
+        "number": 61,
+        "html_url": "https://github.com/test-owner/test-repo/issues/61",
+        "title": "Security vulnerability in requests (HIGH)",
+    }
+
+    log_file = tmp_path / "run_log.json"
+    orchestrator = DevOpsOrchestrator(repo="test-owner/test-repo", log_path=str(log_file))
+
+    summary = orchestrator.run()
+
+    # Rule: overlap with outdated_dependencies -> skip separate outdated issue, file ONLY cve issue
+    assert len(summary.findings) == 1
+    assert summary.findings[0].type == "cve_advisory"
+    mock_open_issue.assert_called_once()
+    assert "security vulnerability" in mock_open_issue.call_args[1]["title"].lower()

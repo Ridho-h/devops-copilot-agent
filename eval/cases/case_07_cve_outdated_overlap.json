@@ -1,0 +1,46 @@
+{
+  "id": "case_07_cve_outdated_overlap",
+  "description": "Package has both outdated version and CVE — must only file CVE issue",
+  "repo_state": {
+    "repo": "test-org/overlap-repo",
+    "default_branch": "main",
+    "description": "Repository with package that is both outdated and vulnerable",
+    "recent_commits": [],
+    "open_issues": [],
+    "open_prs": [],
+    "ci_status": {"status": "passing"},
+    "dependencies": {"requests": "==2.25.0"}
+  },
+  "stale_branches": [],
+  "cve_findings": {
+    "requests": {
+      "package": "requests",
+      "current_version": "2.25.0",
+      "highest_severity": "HIGH",
+      "recommended_fix": "2.31.0",
+      "advisories": [
+        {
+          "id": "GHSA-1",
+          "cve_id": "CVE-2023-32681",
+          "summary": "Header leak",
+          "severity": "HIGH",
+          "fixed_version": "2.31.0"
+        }
+      ]
+    }
+  },
+  "outdated_deps": [
+    {
+      "package": "requests",
+      "current_version": "2.25.0",
+      "latest_version": "2.31.0",
+      "is_outdated": true
+    }
+  ],
+  "candidate_improvement": null,
+  "ground_truth": {
+    "should_flag": true,
+    "expected_action": "issue",
+    "expected_type": "cve_advisory"
+  }
+}

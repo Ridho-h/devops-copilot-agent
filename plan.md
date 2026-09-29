@@ -34,11 +34,14 @@ Out of scope for v1 (planned for v2):
 
 ### Phase 3 — Health check task
 - Implement: stale branch detection, failing CI detection, outdated dependency detection
-- Orchestrator opens one summary issue per run if anything is found
+- Orchestrator opens one issue per distinct finding (not a bundled summary), reusing the duplicate-suppression logic from Phase 2 to avoid re-filing the same problem on every run
 
 ### Phase 4 — Improvement suggestion task
-- Orchestrator reads a file/module, proposes a small refactor or doc improvement
-- Opens as a PR (not a direct commit), with a clear description of *why*
+- Scope guardrail: restrict suggestions to a narrow allow-list (docstrings, README gaps, missing type hints, obvious dead code) — no open-ended refactors. Cap frequency to at most one improvement suggestion per repo per N runs, not every run.
+- Orchestrator reads a file/module, proposes one change within the allow-list, with a clear description of *why*
+- Pre-PR verification: generate the change, run the repo's own test suite against it locally (skip this check only if the repo has no test suite), and only open the PR if tests still pass
+- Low-confidence fallback: if the orchestrator isn't confident the change is correct or safe (including when the pre-PR test run fails), open an issue describing the suggestion instead of a PR — do not fall back to opening a PR anyway
+- Opens as a PR (not a direct commit) only when the above checks pass
 
 ### Phase 5 — Browser/RPA layer
 - Add Playwright-based `check_upstream_changelog` and `search_cve_advisory` tools
@@ -46,11 +49,19 @@ Out of scope for v1 (planned for v2):
 
 ### Phase 6 — CVE monitoring task
 - Cross-reference dependency list against advisory sources
-- Opens an issue per confirmed vulnerability, with severity and suggested fix version
+- Priority order update: `cve_advisory` findings rank right after `ci_failure` and ahead of `stale_branches`, `outdated_dependencies`, and `improvement` — a known vulnerability is a security risk, not routine maintenance. Full order: `ci_failure` → `cve_advisory` → `stale_branches` → `outdated_dependencies` → `improvement` → `none`
+- Overlap with `outdated_dependencies`: if a package has both a pending version bump and a known CVE, skip the separate "outdated" issue for that package and file only the CVE issue (it's more urgent and implies an update anyway) — never file both for the same package in one run
+- Severity filtering: only file an issue for `medium` severity or above; dedupe multiple CVEs affecting the same package into a single issue listing all of them, rather than one issue per CVE
+- Opens an issue per confirmed vulnerability (post-filtering/dedupe), with severity and suggested fix version
 
 ### Phase 7 — Eval harness
 - Build a small eval set: known-good and known-bad repo states, check the orchestrator makes the right call (open issue / open PR / do nothing)
-- Track false positive rate (agent flags non-issues) as the key quality metric
+- Fixture-based, not live repos: eval cases use recorded/synthetic GitHub API and registry responses (mocked, like the existing unit tests), not live calls to real repos — deterministic and repeatable on every run, no API cost
+- Per-finding-type definition of a false positive:
+  - `ci_failure`, `cve_advisory`, `outdated_dependencies` — deterministic; a false positive here is a tool-function bug (wrong parsing/comparison), tested with fixed input/output fixture pairs
+  - `improvement` — judgment-based; a false positive is proposing something trivial or unhelpful even when tests pass. Requires a hand-reviewed case set (human-labeled "worth suggesting" vs "not worth it"), not just assert-equal checks
+- Concrete threshold: false positive rate must stay under 10% across the eval set to pass; `run_eval.py` exits non-zero if exceeded
+- CI integration: add a step (or a second lightweight workflow) that runs `eval/run_eval.py` on every PR touching `agent/`, so future orchestrator changes can't silently regress the false-positive rate
 
 ### Phase 8 — Deployment
 - GitHub Actions workflow per repo, scheduled weekly

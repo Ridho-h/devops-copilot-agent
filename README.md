@@ -147,10 +147,18 @@ The eval suite runs automatically on every pull request via [`.github/workflows/
 
 ## Scheduled GitHub Actions Deployment
 
-The agent is pre-configured with [`.github/workflows/scheduled-run.yml`](.github/workflows/scheduled-run.yml) to execute weekly on Mondays at 09:00 UTC (or manually via `workflow_dispatch`).
+The agent is pre-configured with `.github/workflows/scheduled-run.yml` to execute weekly on
+Mondays at 09:00 UTC (or manually via `workflow_dispatch`).
 
-1. Enable GitHub Actions in your repository.
-2. In **Settings > Secrets and variables > Actions**, configure:
-   - `GITHUB_TOKEN`: Standard repository token with `contents: write`, `issues: write`, `pull-requests: write`.
+1. **Enable GitHub Actions** in your repository.
+2. **Grant the built-in token write access** — go to **Settings → Actions → General →
+   Workflow permissions**, and select **"Read and write permissions."** This lets the
+   auto-provided `GITHUB_TOKEN` create branches, open issues, and open pull requests
+   (matching the `contents: write`, `issues: write`, `pull-requests: write` permissions
+   already declared in the workflow file). You do not need to create `GITHUB_TOKEN`
+   yourself — GitHub injects it into every workflow run automatically, and it cannot be
+   added as a manual secret.
+3. **Add one manual secret** — under **Settings → Secrets and variables → Actions**, add:
    - `GEMINI_API_KEY`: API key for Google Gemini model reasoning.
-3. Each run outputs run logs and uploads `agent/run_log.json` as an Actions artifact preserved for 30 days.
+4. Each run outputs run logs and uploads `agent/run_log.json` as an Actions artifact
+   preserved for 30 days.

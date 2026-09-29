@@ -155,9 +155,7 @@ Mondays at 09:00 UTC (or manually via `workflow_dispatch`).
    Workflow permissions**, and select **"Read and write permissions."** This lets the
    auto-provided `GITHUB_TOKEN` create branches, open issues, and open pull requests
    (matching the `contents: write`, `issues: write`, `pull-requests: write` permissions
-   already declared in the workflow file). You do not need to create `GITHUB_TOKEN`
-   yourself — GitHub injects it into every workflow run automatically, and it cannot be
-   added as a manual secret.
+   already declared in the workflow file).
 3. **Add one manual secret** — under **Settings → Secrets and variables → Actions**, add:
    - `GEMINI_API_KEY`: API key for Google Gemini model reasoning.
 4. Each run outputs run logs and uploads `agent/run_log.json` as an Actions artifact
